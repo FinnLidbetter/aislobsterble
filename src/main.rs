@@ -1,4 +1,5 @@
 mod slobsterble_client;
+mod models;
 
 use log::{info, error};
 use std::path::PathBuf;
@@ -20,13 +21,13 @@ fn main() {
         error!("Failed to load config: {}", failure_reason);
         process::exit(1);
     }
-    let config = Config::new(config_ini);
+    let config = models::Config::new(config_ini);
 
     let poll_interval_duration = time::Duration::from_secs(config.poll_interval_seconds as u64);
 
     let client = reqwest::blocking::Client::new();
-    let my_client = slobsterble_client::SlobsterbleClient::new(config);
-    let my_client = my_client.renew_refresh_token();
+    let mut my_client = slobsterble_client::SlobsterbleClient::new(config);
+    my_client.renew_refresh_token();
     let games = my_client.list_games();
     match games {
         Ok(games) => {
@@ -39,31 +40,6 @@ fn main() {
     println!("{:?}", my_client);
 }
 
-#[derive(Debug)]
-pub struct Config {
-    root_url: String,
-    poll_interval_seconds: u32,
-    auth_data: AuthData,
-}
-
-impl Config {
-    fn new(config_ini: Ini) -> Config {
-        let root_url = config_ini.get("slobsterble", "root_url").unwrap().clone();
-        let username = config_ini.get("aislobsterble", "username").unwrap().clone();
-        let password = config_ini.get("aislobsterble", "password").unwrap().clone();
-        let poll_interval_seconds = config_ini
-            .getint("aislobsterble", "poll_interval_seconds")
-            .unwrap().unwrap() as u32;
-        let auth_data = AuthData { username, password };
-        Config { root_url, poll_interval_seconds, auth_data }
-    }
-}
-
-#[derive(Debug)]
-struct AuthData {
-    username: String,
-    password: String,
-}
 
 
 /// Get a path to the configuration file.

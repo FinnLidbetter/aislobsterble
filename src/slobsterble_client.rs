@@ -2,13 +2,10 @@ use chrono::DateTime;
 use chrono::Utc;
 use log::{error};
 use reqwest::header::{AUTHORIZATION};
-use serde::Deserialize;
-use serde_with::{formats::Flexible, TimestampSeconds};
 use std::collections::HashMap;
 
-use crate::Config;
+use crate::models::{Config, Game, GameInfo, TokenPair, Token};
 
-const ALMOST_EXPIRED_THRESHOLD_SECONDS: i64 = 20;
 
 
 #[derive(Debug)]
@@ -20,16 +17,17 @@ pub struct SlobsterbleClient {
 
 impl SlobsterbleClient {
 
+    /// Initialize a new client but with expired JWTs.
     pub fn new(config: Config) -> SlobsterbleClient {
         let client = reqwest::blocking::Client::new();
         let tokens = TokenPair::default();
         SlobsterbleClient{ client, tokens, config }
     }
 
-    pub fn list_games(&self) -> Result<Vec<GameInfo>, reqwest::Error> {
-        if self.tokens.access_token.is_expired() {
-            // Return an error to indicate that access token should be refreshed.
-
+    /// Get a list of active or recently completed games for the player.
+    pub fn list_games(&mut self) -> Result<Vec<GameInfo>, reqwest::Error> {
+        if self.tokens.get_access_token_ref().is_almost_expired() {
+            self.renew_access_token();
         }
         let mut games_path = String::from(&self.config.root_url);
         games_path.push_str("api/games");
@@ -42,22 +40,41 @@ impl SlobsterbleClient {
         }
     }
 
-    pub fn renew_refresh_token(self) -> SlobsterbleClient {
-        if !self.tokens.refresh_token.is_almost_expired() {
-            return self;
+    pub fn get_game(&mut self, game_id: &str) -> Result<Game, reqwest::Error> {
+        let mut game_path = String::from(&self.config.root_url);
+        game_path.push_str("api/game/");
+        game_path.push_str(game_id);
+        if self.tokens.get_access_token_ref().is_almost_expired() {
+            self.renew_access_token();
+        }
+        let request = self.client.get(game_path)
+            .header(AUTHORIZATION, self.get_access_auth_header());
+        let response = request.send()?;
+        match response.error_for_status() {
+            Ok(response) => response.json::<Game>(),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Renew the refresh token for the client if it has expired or will expire soon.
+    pub fn renew_refresh_token(&mut self) {
+        if !self.tokens.get_refresh_token_ref().is_almost_expired() {
+            ()
         }
         let tokens = self.get_new_refresh_token();
         match tokens {
             Ok(tokens) => {
-                SlobsterbleClient{ client: self.client, tokens, config: self.config }
+                self.tokens = tokens;
+                ()
             },
             Err(err) => {
                 error!("Failed to renew refresh token: {}", err);
-                self
+                ()
             }
         }
     }
 
+    /// Get a new refresh token, access token pair.
     fn get_new_refresh_token(&self) -> Result<TokenPair, reqwest::Error> {
         let mut auth_path = String::from(&self.config.root_url);
         auth_path.push_str("api/login");
@@ -73,26 +90,30 @@ impl SlobsterbleClient {
         }
     }
 
-    fn renew_access_token(self) -> SlobsterbleClient {
-        if !self.tokens.access_token.is_almost_expired() {
-            return self;
+    /// Renew the access token if it is expired or will expire soon.
+    fn renew_access_token(&mut self) {
+        if !self.tokens.get_access_token_ref().is_almost_expired() {
+            ()
         }
-        if self.tokens.refresh_token.is_almost_expired() {
-            return self.renew_refresh_token();
+        if self.tokens.get_refresh_token_ref().is_almost_expired() {
+            self.renew_refresh_token()
         }
         let access_token = self.get_new_access_token();
         match access_token {
             Ok(access_token) => {
-                let tokens = TokenPair{ refresh_token: self.tokens.refresh_token, access_token };
-                SlobsterbleClient{ client: self.client, tokens, config: self.config }
+                let tokens = TokenPair::new(self.tokens.get_refresh_token_ref().clone(), access_token);
+                self.tokens = tokens;
+                ()
+                // SlobsterbleClient{ client: self.client, tokens, config: self.config }
             },
             Err(err) => {
                 error!("Failed to renew access token: {}", err);
-                self
+                ()
             }
         }
     }
 
+    /// Get a new access token.
     fn get_new_access_token(&self) -> Result<Token, reqwest::Error> {
         let mut renew_path = String::from(&self.config.root_url);
         renew_path.push_str("api/refresh-access");
@@ -108,86 +129,17 @@ impl SlobsterbleClient {
         }
     }
 
+    /// Get the authorization header using the access token.
     fn get_access_auth_header(&self) -> String {
         let mut auth_header = String::from("Bearer ");
-        auth_header.push_str(&self.tokens.access_token.token);
+        auth_header.push_str(&self.tokens.get_access_token_ref().token());
         auth_header
     }
 
+    /// Get the authorization header using the refresh token.
     fn get_refresh_auth_header(&self) -> String {
         let mut auth_header = String::from("Bearer ");
-        auth_header.push_str(&self.tokens.refresh_token.token);
+        auth_header.push_str(&self.tokens.get_refresh_token_ref().token());
         auth_header
     }
-}
-
-
-#[derive(Debug)]
-#[derive(Deserialize)]
-struct TokenPair {
-    access_token: Token,
-    refresh_token: Token,
-}
-
-impl TokenPair {
-    fn default() -> TokenPair {
-        TokenPair { access_token: Token::default(), refresh_token: Token::default() }
-    }
-}
-
-
-#[derive(Debug)]
-#[serde_with::serde_as]
-#[derive(Deserialize)]
-struct Token {
-    token: String,
-    #[serde_as(as = "TimestampSeconds<String, Flexible>")]
-    expiration_date: DateTime<Utc>,
-}
-
-
-impl Token {
-
-    pub fn is_expired(&self) -> bool {
-        let now = chrono::Utc::now();
-        self.expiration_date < now
-    }
-
-    pub fn is_almost_expired(&self) -> bool {
-        let now = chrono::Utc::now();
-        let almost_expired_threshold_duration = chrono::Duration::seconds(ALMOST_EXPIRED_THRESHOLD_SECONDS);
-        self.expiration_date < now + almost_expired_threshold_duration
-    }
-
-    fn default() -> Token {
-        let epoch = chrono::DateTime::<Utc>::from(std::time::UNIX_EPOCH);
-        Token { token: String::from(""), expiration_date: epoch }
-    }
-}
-
-#[derive(Debug)]
-#[serde_with::serde_as]
-#[derive(Deserialize)]
-pub struct GameInfo {
-    #[serde_as(as = "TimestampSeconds<String, Flexible>")]
-    started: DateTime<Utc>,
-    #[serde_as(as = "Option<TimestampSeconds<String, Flexible>>")]
-    completed: Option<DateTime<Utc>>,
-    whose_turn_name: String,
-    game_players: GamePlayerInfo,
-    id: String,
-}
-
-#[derive(Debug)]
-#[derive(Deserialize)]
-struct GamePlayerInfo {
-    score: i32,
-    player: PlayerInfo,
-    turn_order: i32,
-}
-#[derive(Debug)]
-#[derive(Deserialize)]
-struct PlayerInfo {
-    id: String,
-    display_name: String,
 }

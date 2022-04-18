@@ -25,6 +25,8 @@ impl SlobsterbleClient {
     }
 
     /// Get a list of active or recently completed games for the player.
+    ///
+    /// This function may update the refresh and access tokens.
     pub fn list_games(&mut self) -> Result<Vec<GameInfo>, reqwest::Error> {
         if self.tokens.get_access_token_ref().is_almost_expired() {
             self.renew_access_token();
@@ -40,6 +42,9 @@ impl SlobsterbleClient {
         }
     }
 
+    /// Get the game state for the specified game.
+    ///
+    /// This function may update the refresh and access tokens.
     pub fn get_game(&mut self, game_id: &str) -> Result<GameSerializer, reqwest::Error> {
         let mut game_path = String::from(&self.config.root_url);
         game_path.push_str("api/game/");

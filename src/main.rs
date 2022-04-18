@@ -1,5 +1,6 @@
 mod slobsterble_client;
 mod models;
+mod controller;
 
 use log::{info, error};
 use std::path::PathBuf;
@@ -25,7 +26,6 @@ fn main() {
 
     let poll_interval_duration = time::Duration::from_secs(config.poll_interval_seconds as u64);
 
-    let client = reqwest::blocking::Client::new();
     let mut my_client = slobsterble_client::SlobsterbleClient::new(config);
     my_client.renew_refresh_token();
     let games = my_client.list_games();

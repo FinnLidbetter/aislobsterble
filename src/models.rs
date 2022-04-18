@@ -8,8 +8,10 @@ use serde_with::{formats::Flexible, TimestampSeconds};
 const ALMOST_EXPIRED_THRESHOLD_SECONDS: i64 = 20;
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Config {
     pub root_url: String,
+    pub ai_display_name: String,
     pub poll_interval_seconds: u32,
     pub auth_data: AuthData,
 }
@@ -19,15 +21,17 @@ impl Config {
         let root_url = config_ini.get("slobsterble", "root_url").unwrap().clone();
         let username = config_ini.get("aislobsterble", "username").unwrap().clone();
         let password = config_ini.get("aislobsterble", "password").unwrap().clone();
+        let ai_display_name = config_ini.get("aislobsterble", "display_name").unwrap().clone();
         let poll_interval_seconds = config_ini
             .getint("aislobsterble", "poll_interval_seconds")
             .unwrap().unwrap() as u32;
         let auth_data = AuthData { username, password };
-        Config { root_url, poll_interval_seconds, auth_data }
+        Config { root_url, ai_display_name, poll_interval_seconds, auth_data }
     }
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct AuthData {
     pub username: String,
     pub password: String,
@@ -107,10 +111,10 @@ pub struct GameInfo {
     #[serde_as(as = "TimestampSeconds<String, Flexible>")]
     started: DateTime<Utc>,
     #[serde_as(as = "Option<TimestampSeconds<String, Flexible>>")]
-    completed: Option<DateTime<Utc>>,
-    whose_turn_name: String,
+    pub completed: Option<DateTime<Utc>>,
+    pub whose_turn_name: String,
     game_players: GamePlayerInfo,
-    id: String,
+    pub id: String,
 }
 
 #[derive(Debug)]
@@ -130,13 +134,13 @@ struct PlayerInfo {
 #[derive(Deserialize)]
 pub struct GameSerializer {
     board_state: Vec<PlayedTileSerializer>,
-    game_players: Vec<GamePlayerSerializer>,
-    turn_number: i32,
+    pub game_players: Vec<GamePlayerSerializer>,
+    pub turn_number: i32,
     whose_turn_name: String,
     num_tiles_remaining: i32,
     rack: Vec<TileCountSerializer>,
     prev_move: Option<PrevMoveSerializer>,
-    fetcher_player_id: i32,
+    pub fetcher_player_id: i32,
 }
 
 #[derive(Deserialize)]
@@ -162,14 +166,14 @@ pub struct TileCountSerializer {
 #[derive(Deserialize)]
 pub struct GamePlayerSerializer {
     score: i32,
-    turn_order: i32,
-    player: PlayerSerializer,
+    pub turn_order: i32,
+    pub player: PlayerSerializer,
     num_tiles_remaining: i32,
 }
 
 #[derive(Deserialize)]
 pub struct PlayerSerializer {
-    id: i32,
+    pub id: i32,
     display_name: String,
 }
 
@@ -201,4 +205,22 @@ pub struct PrevMoveSerializer {
     player_id: i32,
     display_name: String,
     exchanged_count: i32,
+}
+
+pub struct GameBoard {
+
+}
+impl GameBoard {
+    pub fn new(game_state: &GameSerializer) -> GameBoard {
+        GameBoard{ }
+    }
+}
+
+pub struct Rack {
+
+}
+impl Rack {
+    pub fn new(game_state: &GameSerializer) -> Rack {
+        Rack{ }
+    }
 }

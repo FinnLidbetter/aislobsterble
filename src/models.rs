@@ -128,6 +128,77 @@ struct PlayerInfo {
 }
 
 #[derive(Deserialize)]
-pub struct Game {
+pub struct GameSerializer {
+    board_state: Vec<PlayedTileSerializer>,
+    game_players: Vec<GamePlayerSerializer>,
+    turn_number: i32,
+    whose_turn_name: String,
+    num_tiles_remaining: i32,
+    rack: Vec<TileCountSerializer>,
+    prev_move: Option<PrevMoveSerializer>,
+    fetcher_player_id: i32,
+}
 
+#[derive(Deserialize)]
+pub struct PlayedTileSerializer {
+    tile: TileSerializer,
+    row: i32,
+    column: i32,
+}
+
+#[derive(Deserialize)]
+pub struct TileSerializer {
+    letter: Option<String>,
+    is_blank: bool,
+    value: i32,
+}
+
+#[derive(Deserialize)]
+pub struct TileCountSerializer {
+    tile: TileSerializer,
+    count: i32,
+}
+
+#[derive(Deserialize)]
+pub struct GamePlayerSerializer {
+    score: i32,
+    turn_order: i32,
+    player: PlayerSerializer,
+    num_tiles_remaining: i32,
+}
+
+#[derive(Deserialize)]
+pub struct PlayerSerializer {
+    id: i32,
+    display_name: String,
+}
+
+
+#[derive(Deserialize)]
+pub struct BoardLayoutSerializer {
+    rows: i32,
+    columns: i32,
+    modifiers: Vec<PositionedModifierSerializer>,
+}
+
+#[derive(Deserialize)]
+pub struct PositionedModifierSerializer {
+    row: i32,
+    column: i32,
+    modifier: ModifierSerializer,
+}
+
+#[derive(Deserialize)]
+pub struct ModifierSerializer {
+    word_multiplier: i32,
+    letter_multiplier: i32,
+}
+
+#[derive(Deserialize)]
+pub struct PrevMoveSerializer {
+    word: Option<String>,
+    score: i32,
+    player_id: i32,
+    display_name: String,
+    exchanged_count: i32,
 }

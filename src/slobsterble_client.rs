@@ -4,7 +4,7 @@ use log::{error};
 use reqwest::header::{AUTHORIZATION};
 use std::collections::HashMap;
 
-use crate::models::{Config, Game, GameInfo, TokenPair, Token};
+use crate::models::{Config, GameSerializer, GameInfo, TokenPair, Token};
 
 
 
@@ -40,7 +40,7 @@ impl SlobsterbleClient {
         }
     }
 
-    pub fn get_game(&mut self, game_id: &str) -> Result<Game, reqwest::Error> {
+    pub fn get_game(&mut self, game_id: &str) -> Result<GameSerializer, reqwest::Error> {
         let mut game_path = String::from(&self.config.root_url);
         game_path.push_str("api/game/");
         game_path.push_str(game_id);
@@ -51,7 +51,7 @@ impl SlobsterbleClient {
             .header(AUTHORIZATION, self.get_access_auth_header());
         let response = request.send()?;
         match response.error_for_status() {
-            Ok(response) => response.json::<Game>(),
+            Ok(response) => response.json::<GameSerializer>(),
             Err(err) => Err(err),
         }
     }

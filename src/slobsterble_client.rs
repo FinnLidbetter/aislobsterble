@@ -4,8 +4,8 @@ use log::{error};
 use reqwest::header::{AUTHORIZATION};
 use std::collections::HashMap;
 
-use crate::models::{Config, GameSerializer, GameInfo, TokenPair, Token};
-
+use crate::models::serializers::{GameInfo, GameSerializer};
+use crate::models::config_models::{Config, Token, TokenPair};
 
 
 #[derive(Debug)]

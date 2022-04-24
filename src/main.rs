@@ -1,6 +1,6 @@
 mod slobsterble_client;
-mod models;
 mod controller;
+mod models;
 
 use log::{info, error};
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ fn main() {
         error!("Failed to load config: {}", failure_reason);
         process::exit(1);
     }
-    let config = models::Config::new(config_ini);
+    let config = models::config_models::Config::new(config_ini);
 
     let poll_interval_duration = time::Duration::from_secs(config.poll_interval_seconds as u64);
 

@@ -2,7 +2,9 @@ use log::{error};
 use std::thread;
 use std::time::Duration;
 
-use crate::models::{Config, GameInfo, GameSerializer, Rack, GameBoard};
+use crate::models::config_models::Config;
+use crate::models::game_models::{GameBoard, Rack};
+use crate::models::serializers::{GameInfo, GameSerializer};
 use crate::slobsterble_client::{SlobsterbleClient};
 
 pub struct Controller {
@@ -74,6 +76,18 @@ impl Controller {
     }
 
     fn play_turn(&self, game_board: GameBoard, rack: Rack) {
+        for start_row in 0..game_board.get_rows() {
+            for start_column in 0..game_board.get_columns() {
+                if game_board.get_board_tiles_ref()
+                        .get(start_row as usize)
+                        .unwrap().get(start_column as usize).unwrap().is_some() {
+                    continue;
+                }
+                for num_tiles in 1..rack.tiles.len() + 1 {
+                    println!("{}", num_tiles);
+                }
+            }
+        }
 
     }
 

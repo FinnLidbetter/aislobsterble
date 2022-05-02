@@ -1,28 +1,38 @@
-use log::{error};
+use std::cmp;
+use std::fs;
 use std::thread;
 use std::time::Duration;
+use std::collections::HashSet;
+
+use log;
 
 use crate::models::config_models::Config;
-use crate::models::game_models::{GameBoard, Rack};
-use crate::models::serializers::{GameInfo, GameSerializer};
+use crate::models::game_models::{Axis, Coordinates, GameBoard, PlayedTile, Rack, Tile};
+use crate::models::serializers::{GameInfo, GameSerializer, PlayedTileSerializer, TileSerializer};
 use crate::slobsterble_client::{SlobsterbleClient};
+
+
+const PLAY_ATTEMPTS_LIMIT: u32 = 10;
+const BLANK_FILLERS: [char; 5] = ['S', 'E', 'R', 'A', 'T'];
 
 pub struct Controller {
     client: SlobsterbleClient,
     config: Config,
+    dictionary: HashSet<String>,
 }
 
 impl Controller {
 
     pub fn new(config: Config) -> Controller {
-        Controller{ client: SlobsterbleClient::new(config.clone()), config }
+        let dictionary = load_dictionary();
+        Controller{ client: SlobsterbleClient::new(config.clone()), config, dictionary }
     }
 
     fn poll(&mut self) {
         let games = match self.client.list_games() {
             Ok(games) => games,
             Err(e) => {
-                error!("Error fetching games list: {}", e);
+                log::error!("Error fetching games list: {}", e);
                 Vec::new()
             }
         };
@@ -32,14 +42,17 @@ impl Controller {
             let game_state = match self.client.get_game(&game.id) {
                 Ok(game_state) => game_state,
                 Err(e) => {
-                    error!("Error fetching game state for game {}: {}", &game.id, e);
+                    log::error!("Error fetching game state for game {}: {}", &game.id, e);
                     continue;
                 },
             };
             if Controller::is_ai_turn(&game_state) {
                 let game_board = GameBoard::new(&game_state);
                 let rack = Rack::new(&game_state);
-                self.play_turn(game_board, rack);
+                match self.play_turn(&game.id,game_board, rack) {
+                    Ok(_result_string) => log::debug!("Successfully played turn in game {}", &game.id),
+                    Err(_result_string) => log::debug!("Failed to play turn in game {}", &game.id),
+                }
             }
         }
         ()
@@ -75,20 +88,172 @@ impl Controller {
         }
     }
 
-    fn play_turn(&self, game_board: GameBoard, rack: Rack) {
+    fn play_turn(&mut self, game_id: &String, game_board: GameBoard, rack: Rack) -> Result<String, String> {
+        let mut candidates = self.candidate_plays(&game_board, &rack);
+        candidates.sort_by_key(|pair| -pair.1);
+        let attempt_limit = cmp::min(candidates.len(), PLAY_ATTEMPTS_LIMIT as usize);
+        for (candidate_play, score) in candidates[..attempt_limit].iter() {
+            let mut serializable_play: Vec<PlayedTileSerializer> = Vec::new();
+            for played_tile in candidate_play.iter() {
+                let row = played_tile.get_coordinates_ref().get_row();
+                let column = played_tile.get_coordinates_ref().get_column();
+                let letter_for_serializer = match played_tile.get_tile_ref().get_letter() {
+                    Some(letter) => Some(String::from(letter)),
+                    None => None,
+                };
+                let is_blank = played_tile.get_tile_ref().is_blank();
+                let value = played_tile.get_tile_ref().get_value();
+                let tile = TileSerializer{ letter: letter_for_serializer, is_blank, value };
+                serializable_play.push(
+                    PlayedTileSerializer{ row, column, tile }
+                );
+            }
+            match self.client.play_turn(game_id, &serializable_play) {
+                Ok(_response) => {
+                    if self.config.check_score {
+                        match self.verify_score(game_id, &serializable_play, *score) {
+                            Ok(msg) => {
+                                log::info!("{}", &msg);
+                                return Ok(msg);
+                            },
+                            Err(err) => {
+                                log::error!("{}", err);
+                            },
+                        }
+                    } else {
+                        let success_message = format!("Successfully played turn in game {}.", game_id);
+                        log::info!("{}", &success_message);
+                        return Ok(success_message);
+                    }
+                },
+                Err(err) => {
+                    let error_message = format!(
+                        "Error submitting turn {:?} to game {}. Error: {}",
+                        &serializable_play, game_id, err
+                    );
+                    log::error!("{}", &error_message);
+                },
+            };
+        }
+        Err(format!("Failed to successfully play a turn in game {}.", game_id))
+    }
+
+    /// Verify that the score calculated by AISlobsterble matches that calculated by Slobsterble.
+    fn verify_score(
+        &mut self, game_id: &String, played_tiles: &Vec<PlayedTileSerializer>, expected_score: i32
+    ) -> Result<String, String> {
+        match self.client.get_game(game_id) {
+            Ok(after_play_game_state) => {
+                let prev_move = after_play_game_state.prev_move;
+                match prev_move {
+                    Some(prev_move) => {
+                        if prev_move.score != expected_score {
+                            Err(format!(
+                                "Expected score {} but got score {} in game {} with tiles {:?}",
+                                expected_score, prev_move.score, game_id, &played_tiles
+                            ))
+                        } else {
+                            Ok(format!(
+                                "Successfully played turn in game {} for {} points.",
+                                game_id, expected_score
+                            ))
+                        }
+                    },
+                    None => {
+                        Err(format!("After successful turn play in game {} prev move is none.", game_id))
+                    },
+                }
+            },
+            Err(e) => {
+                Err(format!(
+                    "Failed to get game state in game {} for verifying score calculation. {}",
+                    game_id, e
+                ))
+            },
+        }
+    }
+
+    fn candidate_plays(&self, game_board: &GameBoard, rack: &Rack) -> Vec<(Vec<PlayedTile>, i32)> {
+        if rack.tiles.iter().any(|tile| tile.is_letterless()) {
+            let mut candidates: Vec<(Vec<PlayedTile>, i32)> = Vec::new();
+            let letterless_count = rack.tiles.iter().filter(|tile| tile.is_letterless()).count();
+            if letterless_count == 1 {
+                for ch in b'A'..=b'Z' {
+                    let ch = ch as char;
+                    let filled_rack = rack.fill_blanks(&vec![ch]);
+                    candidates.extend(self.candidate_plays(game_board, &filled_rack));
+                }
+            } else {
+                let mut letter_fills: Vec<char> = Vec::new();
+                for index in 0..letterless_count - 2 {
+                    letter_fills.push(BLANK_FILLERS[index % BLANK_FILLERS.len()]);
+                }
+                letter_fills.push('A');
+                letter_fills.push('A');
+                for ch_1 in b'A'..=b'Z' {
+                    let ch_1 = ch_1 as char;
+
+                    letter_fills[letterless_count - 2] = ch_1;
+                    for ch_2 in b'A'..=b'Z' {
+                        let ch_2 = ch_2 as char;
+                        letter_fills[letterless_count - 1] = ch_2;
+                        let filled_rack = rack.fill_blanks(&letter_fills);
+                        candidates.extend(self.candidate_plays(game_board, &filled_rack));
+                    }
+                }
+            }
+            return candidates;
+        }
+        let mut candidates: Vec<(Vec<PlayedTile>, i32)> = Vec::new();
         for start_row in 0..game_board.get_rows() {
             for start_column in 0..game_board.get_columns() {
-                if game_board.get_board_tiles_ref()
-                        .get(start_row as usize)
-                        .unwrap().get(start_column as usize).unwrap().is_some() {
+                let start_coordinates = Coordinates::new(start_row, start_column);
+                if game_board.is_occupied(&start_coordinates).unwrap_or(true) {
                     continue;
                 }
-                for num_tiles in 1..rack.tiles.len() + 1 {
-                    println!("{}", num_tiles);
+                for axis in Axis::iterator() {
+                    for num_tiles in 1..rack.tiles.len() + 1 {
+                        // Check that it is ok to play this many tiles at this position.
+                        let feasibility_tiles: Vec<&Tile> = (0..num_tiles).map(|index| &rack.tiles[index]).collect();
+                        let played_tiles = game_board.build_played_tiles(&start_coordinates, feasibility_tiles, axis);
+                        if played_tiles.is_err() {
+                            continue;
+                        }
+                        let played_tiles = played_tiles.unwrap();
+                        if !game_board.is_connected(&played_tiles) && !game_board.is_through_center(&played_tiles) {
+                            continue;
+                        }
+                        let mut index_selection: Option<Vec<usize>> = Some((0..num_tiles).collect());
+                        while index_selection.is_some() {
+                            let mut ordering: Option<Vec<usize>> = Some((0..num_tiles).collect());
+                            while ordering.is_some() {
+                                let tiles_permutation: Vec<&Tile> = ordering.as_ref().unwrap()
+                                    .iter().map(|index| &rack.tiles[index_selection.as_ref().unwrap()[*index]])
+                                    .collect();
+
+                                let played_tiles = game_board.build_played_tiles(&start_coordinates, tiles_permutation, axis);
+                                let played_tiles = match played_tiles {
+                                    Ok(played_tiles) => played_tiles,
+                                    Err(e) => {
+                                        log::error!("Failed to build played tiles: {}", e);
+                                        ordering = next_permutation(ordering.unwrap());
+                                        continue;
+                                    },
+                                };
+                                let words_created = game_board.words_created(&played_tiles);
+                                if words_created.iter().all(|word| self.dictionary.contains(word)) {
+                                    let score = game_board.score(&played_tiles);
+                                    candidates.push((played_tiles, score));
+                                }
+                                ordering = next_permutation(ordering.unwrap());
+                            }
+                            index_selection = next_combination(index_selection.unwrap(), rack.tiles.len());
+                        }
+                    }
                 }
             }
         }
-
+        candidates
     }
 
     pub fn run(&mut self) {
@@ -98,4 +263,65 @@ impl Controller {
             thread::sleep(sleep_duration);
         }
     }
+}
+
+fn load_dictionary() -> HashSet<String> {
+    let mut dictionary = HashSet::new();
+    let words_string = fs::read_to_string("dictionary.txt").expect("Error loading dictionary file.");
+    for word in words_string.lines() {
+        dictionary.insert(word.to_uppercase());
+    }
+    dictionary
+}
+
+fn next_combination(mut selection: Vec<usize>, population_size: usize) -> Option<Vec<usize>> {
+    let selection_size = selection.len();
+    if population_size < selection_size {
+        panic!("Cannot get the next combination for a selection size smaller than the population size.");
+    }
+    let mut i = selection_size - 1;
+    while *selection.get(i).unwrap() == population_size - selection_size + i {
+        if i == 0 {
+            return None;
+        }
+        i -= 1;
+    }
+    selection[i] += 1;
+    for j in i + 1..selection_size {
+        selection[j] = selection[i] + j - i;
+    }
+    Some(selection)
+}
+
+fn next_permutation(mut permutation: Vec<usize>) -> Option<Vec<usize>> {
+    let mut first = get_first(&permutation)?;
+    let mut to_swap = permutation.len() - 1;
+    while permutation[first] >= permutation[to_swap] {
+        to_swap -= 1;
+    }
+    swap(&mut permutation, first, to_swap);
+    first += 1;
+    to_swap = permutation.len() - 1;
+    while first < to_swap {
+        swap(&mut permutation, first, to_swap);
+        first += 1;
+        to_swap -= 1;
+    }
+    Some(permutation)
+}
+fn get_first(permutation: &Vec<usize>) -> Option<usize> {
+    if permutation.len() == 1 {
+        return None;
+    }
+    for index in (0..permutation.len() - 1).rev() {
+        if permutation[index] < permutation[index + 1] {
+            return Some(index);
+        }
+    }
+    None
+}
+fn swap(permutation: &mut Vec<usize>, i: usize, j: usize) {
+    let tmp = permutation[i];
+    permutation[i] = permutation[j];
+    permutation[j] = tmp;
 }

@@ -1,7 +1,6 @@
 use chrono::DateTime;
 use chrono::Utc;
-use configparser::ini::Ini;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_with::{formats::Flexible, TimestampSeconds};
 
 #[derive(Debug)]
@@ -44,14 +43,14 @@ pub struct GameSerializer {
     pub fetcher_player_id: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct PlayedTileSerializer {
     pub tile: TileSerializer,
     pub row: i32,
     pub column: i32,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct TileSerializer {
     pub letter: Option<String>,
     pub is_blank: bool,

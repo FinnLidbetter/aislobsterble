@@ -1,10 +1,8 @@
-use chrono::DateTime;
-use chrono::Utc;
 use log::{error};
 use reqwest::header::{AUTHORIZATION};
 use std::collections::HashMap;
 
-use crate::models::serializers::{GameInfo, GameSerializer};
+use crate::models::serializers::{GameInfo, GameSerializer, PlayedTileSerializer};
 use crate::models::config_models::{Config, Token, TokenPair};
 
 
@@ -61,6 +59,23 @@ impl SlobsterbleClient {
         }
     }
 
+    pub fn play_turn(&mut self, game_id: &str, played_tiles: &Vec<PlayedTileSerializer>) -> Result<String, reqwest::Error> {
+        let mut game_path = String::from(&self.config.root_url);
+        game_path.push_str("api/game");
+        game_path.push_str(game_id);
+        if self.tokens.get_access_token_ref().is_almost_expired() {
+            self.renew_access_token();
+        }
+        let request = self.client.post(game_path)
+            .header(AUTHORIZATION, self.get_access_auth_header())
+            .json(&played_tiles);
+        let response = request.send()?;
+        match response.error_for_status() {
+            Ok(response) => response.text(),
+            Err(err) => Err(err),
+        }
+    }
+
     /// Renew the refresh token for the client if it has expired or will expire soon.
     pub fn renew_refresh_token(&mut self) {
         if !self.tokens.get_refresh_token_ref().is_almost_expired() {
@@ -109,7 +124,6 @@ impl SlobsterbleClient {
                 let tokens = TokenPair::new(self.tokens.get_refresh_token_ref().clone(), access_token);
                 self.tokens = tokens;
                 ()
-                // SlobsterbleClient{ client: self.client, tokens, config: self.config }
             },
             Err(err) => {
                 error!("Failed to renew access token: {}", err);

@@ -2,14 +2,12 @@ mod slobsterble_client;
 mod controller;
 mod models;
 
-use log::{info, error};
+use log;
 use std::path::PathBuf;
-use std::thread;
-use std::time;
 use std::process;
 
 use configparser::ini::Ini;
-
+use crate::controller::Controller;
 
 
 fn main() {
@@ -19,25 +17,12 @@ fn main() {
 
     let config_path = get_config_path();
     if let Err(failure_reason) = config_ini.load(config_path) {
-        error!("Failed to load config: {}", failure_reason);
+        log::error!("Failed to load config: {}", failure_reason);
         process::exit(1);
     }
     let config = models::config_models::Config::new(config_ini);
-
-    let poll_interval_duration = time::Duration::from_secs(config.poll_interval_seconds as u64);
-
-    let mut my_client = slobsterble_client::SlobsterbleClient::new(config);
-    my_client.renew_refresh_token();
-    let games = my_client.list_games();
-    match games {
-        Ok(games) => {
-            println!("{:?}", games);
-        },
-        Err(e) => {
-            println!("{:?}", e);
-        }
-    }
-    println!("{:?}", my_client);
+    let mut controller = Controller::new(config);
+    controller.run();
 }
 
 

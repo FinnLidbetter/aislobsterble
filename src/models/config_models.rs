@@ -10,6 +10,7 @@ const ALMOST_EXPIRED_THRESHOLD_SECONDS: i64 = 20;
 pub struct Config {
     pub root_url: String,
     pub ai_display_name: String,
+    pub check_score: bool,
     pub poll_interval_seconds: u32,
     pub auth_data: AuthData,
 }
@@ -19,12 +20,14 @@ impl Config {
         let root_url = config_ini.get("slobsterble", "root_url").unwrap().clone();
         let username = config_ini.get("aislobsterble", "username").unwrap().clone();
         let password = config_ini.get("aislobsterble", "password").unwrap().clone();
+        let check_score = config_ini.getboolcoerce("aislobsterble", "check_score")
+            .unwrap_or(Some(false)).unwrap_or(false);
         let ai_display_name = config_ini.get("aislobsterble", "display_name").unwrap().clone();
         let poll_interval_seconds = config_ini
             .getint("aislobsterble", "poll_interval_seconds")
             .unwrap().unwrap() as u32;
         let auth_data = AuthData { username, password };
-        Config { root_url, ai_display_name, poll_interval_seconds, auth_data }
+        Config { root_url, ai_display_name, check_score, poll_interval_seconds, auth_data }
     }
 }
 
@@ -60,12 +63,6 @@ impl TokenPair {
         &self.access_token
     }
 
-    pub fn set_refresh_token(&mut self, refresh_token: Token) {
-        self.refresh_token = refresh_token;
-    }
-    pub fn set_access_token(&mut self, access_token: Token) {
-        self.access_token = access_token;
-    }
 }
 
 
@@ -80,11 +77,6 @@ pub struct Token {
 
 
 impl Token {
-
-    pub fn is_expired(&self) -> bool {
-        let now = chrono::Utc::now();
-        self.expiration_date < now
-    }
 
     pub fn token(&self) -> &str {
         &self.token

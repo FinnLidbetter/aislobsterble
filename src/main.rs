@@ -1,6 +1,7 @@
 mod slobsterble_client;
 mod controller;
 mod models;
+mod utilities;
 
 use log;
 use std::path::PathBuf;

@@ -4,6 +4,7 @@ mod models;
 mod utilities;
 
 use log;
+use std::env;
 use std::path::PathBuf;
 use std::process;
 
@@ -14,14 +15,20 @@ use crate::controller::Controller;
 fn main() {
     // Parse configuration.
     let mut config_ini = Ini::new();
-    env_logger::init();
 
     let config_path = get_config_path();
-    if let Err(failure_reason) = config_ini.load(config_path) {
+    if let Err(failure_reason) = config_ini.load(config_path.clone()) {
+        env::set_var("RUST_LOG", "aislobsterble=info");
+        env_logger::init();
+        log::info!("Loading config from {:?}", &config_path);
         log::error!("Failed to load config: {}", failure_reason);
         process::exit(1);
     }
     let config = models::config_models::Config::new(config_ini);
+    let log_level_var = format!("aislobsterble={}", &config.log_level);
+    env::set_var("RUST_LOG", log_level_var);
+    env_logger::init();
+    log::info!("Loading config from {:?}", &config_path);
     let mut controller = Controller::new(config);
     controller.run();
 }

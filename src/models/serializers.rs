@@ -12,8 +12,8 @@ pub struct GameInfo {
     #[serde_as(as = "Option<TimestampSeconds<String, Flexible>>")]
     pub completed: Option<DateTime<Utc>>,
     pub whose_turn_name: String,
-    pub game_players: GamePlayerInfo,
-    pub id: String,
+    pub game_players: Vec<GamePlayerInfo>,
+    pub id: i32,
 }
 
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub struct GamePlayerInfo {
 #[derive(Debug)]
 #[derive(Deserialize)]
 pub struct PlayerInfo {
-    pub id: String,
+    pub id: i32,
     pub display_name: String,
 }
 
@@ -43,14 +43,24 @@ pub struct GameSerializer {
     pub fetcher_player_id: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
+pub struct FlatPlayedTileSerializer {
+    pub is_blank: bool,
+    pub value: i32,
+    pub row: i32,
+    pub column: i32,
+    pub is_exchange: bool,
+    pub letter: Option<char>,
+}
+
+#[derive(Deserialize, Debug)]
 pub struct PlayedTileSerializer {
     pub tile: TileSerializer,
     pub row: i32,
     pub column: i32,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct TileSerializer {
     pub letter: Option<String>,
     pub is_blank: bool,

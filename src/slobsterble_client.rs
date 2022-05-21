@@ -1,8 +1,8 @@
-use log::{error};
+use log;
 use reqwest::header::{AUTHORIZATION};
 use std::collections::HashMap;
 
-use crate::models::serializers::{GameInfo, GameSerializer, PlayedTileSerializer};
+use crate::models::serializers::{FlatPlayedTileSerializer, GameInfo, GameSerializer};
 use crate::models::config_models::{Config, Token, TokenPair};
 
 
@@ -27,7 +27,7 @@ impl SlobsterbleClient {
     /// This function may update the refresh and access tokens.
     pub fn list_games(&mut self) -> Result<Vec<GameInfo>, reqwest::Error> {
         if self.tokens.get_access_token_ref().is_almost_expired() {
-            self.renew_access_token();
+            self.renew_access_token(false);
         }
         let mut games_path = String::from(&self.config.root_url);
         games_path.push_str("api/games");
@@ -35,7 +35,9 @@ impl SlobsterbleClient {
             .header(AUTHORIZATION, self.get_access_auth_header());
         let response = request.send()?;
         match response.error_for_status() {
-            Ok(response) => response.json::<Vec<GameInfo>>(),
+            Ok(response) => {
+                response.json::<Vec<GameInfo>>()
+            },
             Err(err) => Err(err),
         }
     }
@@ -48,7 +50,7 @@ impl SlobsterbleClient {
         game_path.push_str("api/game/");
         game_path.push_str(game_id);
         if self.tokens.get_access_token_ref().is_almost_expired() {
-            self.renew_access_token();
+            self.renew_access_token(false);
         }
         let request = self.client.get(game_path)
             .header(AUTHORIZATION, self.get_access_auth_header());
@@ -59,12 +61,12 @@ impl SlobsterbleClient {
         }
     }
 
-    pub fn play_turn(&mut self, game_id: &str, played_tiles: &Vec<PlayedTileSerializer>) -> Result<String, reqwest::Error> {
+    pub fn play_turn(&mut self, game_id: &str, played_tiles: &Vec<FlatPlayedTileSerializer>) -> Result<String, reqwest::Error> {
         let mut game_path = String::from(&self.config.root_url);
-        game_path.push_str("api/game");
+        game_path.push_str("api/game/");
         game_path.push_str(game_id);
         if self.tokens.get_access_token_ref().is_almost_expired() {
-            self.renew_access_token();
+            self.renew_access_token(false);
         }
         let request = self.client.post(game_path)
             .header(AUTHORIZATION, self.get_access_auth_header())
@@ -77,8 +79,8 @@ impl SlobsterbleClient {
     }
 
     /// Renew the refresh token for the client if it has expired or will expire soon.
-    pub fn renew_refresh_token(&mut self) {
-        if !self.tokens.get_refresh_token_ref().is_almost_expired() {
+    pub fn renew_refresh_token(&mut self, force: bool) {
+        if !self.tokens.get_refresh_token_ref().is_almost_expired() && !force {
             ()
         }
         let tokens = self.get_new_refresh_token();
@@ -88,7 +90,7 @@ impl SlobsterbleClient {
                 ()
             },
             Err(err) => {
-                error!("Failed to renew refresh token: {}", err);
+                log::error!("Failed to renew refresh token: {}", err);
                 ()
             }
         }
@@ -111,12 +113,12 @@ impl SlobsterbleClient {
     }
 
     /// Renew the access token if it is expired or will expire soon.
-    fn renew_access_token(&mut self) {
-        if !self.tokens.get_access_token_ref().is_almost_expired() {
+    fn renew_access_token(&mut self, force: bool) {
+        if !self.tokens.get_access_token_ref().is_almost_expired() && !force {
             ()
         }
         if self.tokens.get_refresh_token_ref().is_almost_expired() {
-            self.renew_refresh_token()
+            self.renew_refresh_token(true)
         }
         let access_token = self.get_new_access_token();
         match access_token {
@@ -126,7 +128,8 @@ impl SlobsterbleClient {
                 ()
             },
             Err(err) => {
-                error!("Failed to renew access token: {}", err);
+                log::error!("Failed to renew access token: {}", err);
+                self.renew_refresh_token(true);
                 ()
             }
         }

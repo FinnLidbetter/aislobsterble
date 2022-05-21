@@ -8,7 +8,7 @@ use crate::models::serializers::GameSerializer;
 const BINGO_BONUS: i32 = 50;
 const BINGO_TILES_LENGTH: i32 = 7;
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Tile {
     letter: Option<char>,
     value: i32,
@@ -21,7 +21,7 @@ impl Tile {
     pub fn is_letterless(&self) -> bool { self.letter.is_none() }
 }
 
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PlayedTile {
     coordinates: Coordinates,
     tile: Tile,
@@ -41,6 +41,7 @@ pub struct Modifier {
     word_multiplier: i32,
 }
 
+#[derive(Debug)]
 pub enum Axis {
     Horizontal,
     Vertical,
@@ -80,7 +81,7 @@ impl Direction {
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Coordinates {
     row: i32,
     column: i32,
@@ -335,12 +336,12 @@ impl GameBoard {
         let secondary_axis = primary_axis.complement();
         let played_tile_map = GameBoard::played_tile_map(played_tiles);
         let mut words = Vec::new();
-        let primary_start = self.min_connected_position(&played_tiles.first().unwrap().coordinates, &primary_axis);
-        let primary_end = self.max_connected_position(&played_tiles.last().unwrap().coordinates, &primary_axis);
+        let primary_start = self.min_connected_position(&played_tiles.first().unwrap().coordinates, &played_tile_map, &primary_axis);
+        let primary_end = self.max_connected_position(&played_tiles.last().unwrap().coordinates, &played_tile_map, &primary_axis);
         words.push(self.build_word(primary_start, primary_end, &played_tile_map));
         for played_tile in played_tiles.iter() {
-            let start = self.min_connected_position(&played_tile.coordinates, &secondary_axis);
-            let end = self.max_connected_position(&played_tile.coordinates, &secondary_axis);
+            let start = self.min_connected_position(&played_tile.coordinates, &played_tile_map, &secondary_axis);
+            let end = self.max_connected_position(&played_tile.coordinates, &played_tile_map, &secondary_axis);
             if start != end {
                 words.push(self.build_word(start, end, &played_tile_map));
             }
@@ -353,12 +354,14 @@ impl GameBoard {
             Ordering::Less => panic!("Cannot find the primary axis of no tiles."),
             Ordering::Equal => {
                 let played_tile = played_tiles.first().unwrap();
-                let horizontal_min = self.min_connected_position(&played_tile.coordinates, &Axis::Horizontal);
-                let horizontal_max = self.max_connected_position(&played_tile.coordinates, &Axis::Horizontal);
+                let mut played_tile_map = HashMap::new();
+                played_tile_map.insert(played_tile.coordinates.clone(), played_tile);
+                let horizontal_min = self.min_connected_position(&played_tile.coordinates, &played_tile_map,&Axis::Horizontal);
+                let horizontal_max = self.max_connected_position(&played_tile.coordinates, &played_tile_map, &Axis::Horizontal);
                 if horizontal_min == horizontal_max {
                     Axis::Vertical
                 } else {
-                    Axis::Vertical
+                    Axis::Horizontal
                 }
             },
             Ordering::Greater => {
@@ -374,58 +377,25 @@ impl GameBoard {
     }
 
     pub fn score(&self, played_tiles: &Vec<PlayedTile>) -> i32 {
+        if played_tiles.len() == 0 {
+            return 0;
+        }
         let mut total = 0;
         let primary_axis = self.primary_axis(played_tiles);
         let secondary_axis = primary_axis.complement();
-        if played_tiles.len() == 0 {
-            return 0;
-        } else if played_tiles.len() > 1 {
-            // Score the secondary axis for each tile.
+        total += self.score_axis(played_tiles, &played_tiles[0].coordinates, &primary_axis);
+        if !self.is_through_center(played_tiles) {
             for played_tile in played_tiles.iter() {
-                total += self.score_secondary_axis(played_tile, &secondary_axis);
+                total += self.score_axis(played_tiles, &played_tile.coordinates, &secondary_axis);
             }
         }
-        total += self.score_primary_axis(played_tiles, primary_axis);
         if played_tiles.len() as i32 == BINGO_TILES_LENGTH {
             total += BINGO_BONUS;
         }
         return total;
     }
 
-    fn score_secondary_axis(&self, played_tile: &PlayedTile, axis: &Axis) -> i32 {
-        let mut total = 0;
-        let modifier = self.modifiers
-            .get(played_tile.coordinates.row as usize).unwrap()
-            .get(played_tile.coordinates.column as usize).unwrap();
-        let word_multiplier = modifier.word_multiplier;
-        let start_position = self.min_connected_position(&played_tile.coordinates, axis);
-        let end_position = self.max_connected_position(&played_tile.coordinates, axis);
-        if start_position == end_position {
-            return 0;
-        }
-        let delta = match axis {
-            Axis::Horizontal => (0, 1),  Axis::Vertical => (1, 0),
-        };
-        let mut position = start_position.clone();
-        while position != end_position {
-            match self.board_tiles.get(position.row as usize).unwrap().get(position.column as usize).unwrap() {
-                None => {
-                    if played_tile.coordinates != position {
-                        panic!("Encountered empty position in secondary axis iteration.");
-                    }
-                    total += played_tile.tile.value * modifier.letter_multiplier;
-                },
-                Some(board_tile) => {
-                    total += board_tile.value;
-                },
-            };
-            position = Coordinates{ row: position.row + delta.0, column: position.column + delta.1 };
-        }
-        total *= word_multiplier;
-        return total;
-    }
-
-    fn score_primary_axis(&self, played_tiles: &Vec<PlayedTile>, axis: Axis) -> i32 {
+    fn score_axis(&self, played_tiles: &Vec<PlayedTile>, base_coordinates: &Coordinates, axis: &Axis) -> i32 {
         let mut total = 0;
         let mut word_multiplier = 1;
         if played_tiles.len() == 0 {
@@ -435,26 +405,29 @@ impl GameBoard {
         for played_tile in played_tiles.iter() {
             played_tile_map.insert(played_tile.coordinates.clone(), &played_tile);
         }
-        let coordinate_min = self.min_connected_position(&played_tiles.first().unwrap().coordinates, &axis);
-        let coordinate_max = self.min_connected_position(&played_tiles.last().unwrap().coordinates, &axis);
+        let coordinate_min = self.min_connected_position(base_coordinates, &played_tile_map, &axis);
+        let coordinate_max = self.max_connected_position(base_coordinates, &played_tile_map, &axis);
+        if coordinate_min == coordinate_max {
+            if self.is_through_center(played_tiles) {
+                let modifier = self.modifiers[coordinate_min.row as usize][coordinate_max.column as usize];
+                return played_tiles[0].tile.value * modifier.word_multiplier * modifier.letter_multiplier;
+            }
+            return 0;
+        }
         let delta = match axis {
             Axis::Horizontal => (0, 1), Axis::Vertical => (1, 0)
         };
         let mut position = coordinate_min.clone();
         let mut handled_inclusive = false;
         while position != coordinate_max || !handled_inclusive {
-            let board_tile = self.board_tiles
-                .get(position.row as usize).unwrap()
-                .get(position.column as usize).unwrap();
+            let board_tile = self.board_tiles[position.row as usize][position.column as usize];
             match board_tile {
                 Some(board_tile) => {
                     total += board_tile.value;
                 },
                 None => {
                     let played_tile = played_tile_map.get(&position).unwrap();
-                    let modifier = self.modifiers
-                        .get(position.row as usize).unwrap()
-                        .get(position.column as usize).unwrap();
+                    let modifier = self.modifiers[position.row as usize][position.column as usize];
                     total += played_tile.tile.value * modifier.letter_multiplier;
                     word_multiplier *= modifier.word_multiplier;
                 },
@@ -469,32 +442,32 @@ impl GameBoard {
         return total;
     }
 
-    fn min_connected_position(&self, start_position: &Coordinates, axis: &Axis) -> Coordinates {
-        self.extremal_connected_position(start_position, axis, Direction::Negative)
+    fn min_connected_position(&self, start_position: &Coordinates, played_tile_map: &HashMap<Coordinates, &PlayedTile>, axis: &Axis) -> Coordinates {
+        self.extremal_connected_position(start_position, played_tile_map, axis, Direction::Negative)
     }
-    fn max_connected_position(&self, start_position: &Coordinates, axis: &Axis) -> Coordinates {
-        self.extremal_connected_position(start_position, axis, Direction::Positive)
+    fn max_connected_position(&self, start_position: &Coordinates, played_tile_map: &HashMap<Coordinates, &PlayedTile>, axis: &Axis) -> Coordinates {
+        self.extremal_connected_position(start_position, played_tile_map, axis, Direction::Positive)
     }
-    fn extremal_connected_position(&self, start_position: &Coordinates, axis: &Axis, direction: Direction) -> Coordinates {
+    fn extremal_connected_position(&self, start_position: &Coordinates, played_tile_map: &HashMap<Coordinates, &PlayedTile>, axis: &Axis, direction: Direction) -> Coordinates {
         let delta = match axis {
             Axis::Horizontal => (0, direction.multiplier()),
             Axis::Vertical => (direction.multiplier(), 0),
         };
-        let mut min_position = start_position.clone();
-        let mut adj_position = Coordinates{ row: min_position.row + delta.0, column: min_position.column + delta.1 };
+        let mut extremal_position = start_position.clone();
+        let mut adj_position = Coordinates{ row: extremal_position.row + delta.0, column: extremal_position.column + delta.1 };
         loop {
             let board_row = match self.board_tiles.get(adj_position.row as usize) {
-                None => return min_position,
+                None => return extremal_position,
                 Some(board_row_val) => board_row_val,
             };
             match board_row.get(adj_position.column as usize) {
-                None => return min_position,
+                None => return extremal_position,
                 Some(board_entry) => {
-                    if board_entry.is_none() {
-                        return min_position;
+                    if board_entry.is_none() && !played_tile_map.contains_key(&adj_position) {
+                        return extremal_position;
                     } else {
-                        min_position = adj_position;
-                        adj_position = Coordinates{ row: min_position.row + delta.0, column: min_position.column + delta.1 };
+                        extremal_position = adj_position;
+                        adj_position = Coordinates{ row: extremal_position.row + delta.0, column: extremal_position.column + delta.1 };
                     }
                 }
             }
@@ -593,5 +566,18 @@ mod tests {
         assert!(b_1_1 < a_1_2);
         // PlayedTiles with identical entries are equal.
         assert!(b_1_2 == b_1_2_copy);
+    }
+
+    #[test]
+    fn test_coordinate_eq() {
+        let c12 = Coordinates{ row: 1, column: 2 };
+        let d12 = Coordinates{ row: 1, column: 2 };
+        let c11 = Coordinates{ row: 1, column: 1 };
+        let c22 = Coordinates{ row: 2, column: 2 };
+        assert!(c12 == d12);
+        assert_eq!(c12, d12);
+        assert_ne!(c11, c12);
+        assert_ne!(c12, c22);
+        assert_ne!(c11, c22);
     }
 }

@@ -8,7 +8,7 @@ use log;
 
 use crate::models::config_models::Config;
 use crate::models::game_models::{Axis, Coordinates, GameBoard, PlayedTile, Rack, Tile};
-use crate::models::serializers::{GameInfo, GameSerializer, PlayedTileSerializer, TileSerializer};
+use crate::models::serializers::{FlatPlayedTileSerializer, GameInfo, GameSerializer, PlayedTileSerializer, TileSerializer};
 use crate::slobsterble_client::{SlobsterbleClient};
 use crate::utilities::{next_combination, next_permutation};
 
@@ -30,6 +30,7 @@ impl Controller {
     }
 
     fn poll(&mut self) {
+        log::debug!("Polling games.");
         let games = match self.client.list_games() {
             Ok(games) => games,
             Err(e) => {
@@ -40,7 +41,7 @@ impl Controller {
         let active_games = Controller::filter_active_games(games);
         let potential_ai_turn_games = self.filter_by_ai_name(active_games);
         for game in potential_ai_turn_games.into_iter() {
-            let game_state = match self.client.get_game(&game.id) {
+            let game_state = match self.client.get_game(&game.id.to_string()) {
                 Ok(game_state) => game_state,
                 Err(e) => {
                     log::error!("Error fetching game state for game {}: {}", &game.id, e);
@@ -50,9 +51,9 @@ impl Controller {
             if Controller::is_ai_turn(&game_state) {
                 let game_board = GameBoard::new(&game_state);
                 let rack = Rack::new(&game_state);
-                match self.play_turn(&game.id,game_board, rack) {
+                match self.play_turn(&game.id.to_string(), game_board, rack) {
                     Ok(_result_string) => log::debug!("Successfully played turn in game {}", &game.id),
-                    Err(_result_string) => log::debug!("Failed to play turn in game {}", &game.id),
+                    Err(result_string) => log::debug!("Failed to play turn in game {}: {}", &game.id, result_string),
                 }
             }
         }
@@ -90,11 +91,13 @@ impl Controller {
     }
 
     fn play_turn(&mut self, game_id: &String, game_board: GameBoard, rack: Rack) -> Result<String, String> {
+        log::debug!("Thinking...");
         let mut candidates = self.candidate_plays(&game_board, &rack);
+        log::debug!("Determined candidates.");
         candidates.sort_by_key(|pair| -pair.1);
         let attempt_limit = cmp::min(candidates.len(), PLAY_ATTEMPTS_LIMIT as usize);
         for (candidate_play, score) in candidates[..attempt_limit].iter() {
-            let mut serializable_play: Vec<PlayedTileSerializer> = Vec::new();
+            let mut serializable_play: Vec<FlatPlayedTileSerializer> = Vec::new();
             for played_tile in candidate_play.iter() {
                 let row = played_tile.get_coordinates_ref().get_row();
                 let column = played_tile.get_coordinates_ref().get_column();
@@ -105,8 +108,10 @@ impl Controller {
                 let is_blank = played_tile.get_tile_ref().is_blank();
                 let value = played_tile.get_tile_ref().get_value();
                 let tile = TileSerializer{ letter: letter_for_serializer, is_blank, value };
+                let is_exchange = false;
+                let letter = played_tile.get_tile_ref().get_letter();
                 serializable_play.push(
-                    PlayedTileSerializer{ row, column, tile }
+                    FlatPlayedTileSerializer{ is_blank, value, row, column, is_exchange, letter }
                 );
             }
             match self.client.play_turn(game_id, &serializable_play) {
@@ -119,6 +124,7 @@ impl Controller {
                             },
                             Err(err) => {
                                 log::error!("{}", err);
+                                return Ok(String::from("Error verifying score."));
                             },
                         }
                     } else {
@@ -141,7 +147,7 @@ impl Controller {
 
     /// Verify that the score calculated by AISlobsterble matches that calculated by Slobsterble.
     fn verify_score(
-        &mut self, game_id: &String, played_tiles: &Vec<PlayedTileSerializer>, expected_score: i32
+        &mut self, game_id: &String, played_tiles: &Vec<FlatPlayedTileSerializer>, expected_score: i32
     ) -> Result<String, String> {
         match self.client.get_game(game_id) {
             Ok(after_play_game_state) => {
@@ -182,8 +188,10 @@ impl Controller {
                 for ch in b'A'..=b'Z' {
                     let ch = ch as char;
                     let filled_rack = rack.fill_blanks(&vec![ch]);
+                    log::debug!("{:?}", &filled_rack.tiles);
                     candidates.extend(self.candidate_plays(game_board, &filled_rack));
                 }
+                return candidates;
             } else {
                 let mut letter_fills: Vec<char> = Vec::new();
                 for index in 0..letterless_count - 2 {

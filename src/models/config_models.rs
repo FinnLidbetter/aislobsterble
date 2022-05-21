@@ -12,22 +12,24 @@ pub struct Config {
     pub ai_display_name: String,
     pub check_score: bool,
     pub poll_interval_seconds: u32,
+    pub log_level: String,
     pub auth_data: AuthData,
 }
 
 impl Config {
     pub fn new(config_ini: Ini) -> Config {
-        let root_url = config_ini.get("slobsterble", "root_url").unwrap().clone();
-        let username = config_ini.get("aislobsterble", "username").unwrap().clone();
-        let password = config_ini.get("aislobsterble", "password").unwrap().clone();
+        let root_url = config_ini.get("slobsterble", "root_url").unwrap();
+        let username = config_ini.get("aislobsterble", "username").unwrap();
+        let password = config_ini.get("aislobsterble", "password").unwrap();
         let check_score = config_ini.getboolcoerce("aislobsterble", "check_score")
             .unwrap_or(Some(false)).unwrap_or(false);
-        let ai_display_name = config_ini.get("aislobsterble", "display_name").unwrap().clone();
+        let ai_display_name = config_ini.get("aislobsterble", "display_name").unwrap();
         let poll_interval_seconds = config_ini
             .getint("aislobsterble", "poll_interval_seconds")
             .unwrap().unwrap() as u32;
         let auth_data = AuthData { username, password };
-        Config { root_url, ai_display_name, check_score, poll_interval_seconds, auth_data }
+        let log_level = config_ini.get("aislobsterble", "log_level").unwrap();
+        Config { root_url, ai_display_name, check_score, poll_interval_seconds, log_level, auth_data }
     }
 }
 
